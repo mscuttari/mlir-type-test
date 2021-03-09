@@ -21,7 +21,7 @@
 class TestOpLowering : public mlir::OpConversionPattern<TestOp>
 {
 public:
-    TestOpLowering(mlir::MLIRContext* ctx, TypeConverter& typeConverter)
+    TestOpLowering(mlir::MLIRContext* ctx, mlir::TypeConverter& typeConverter)
             : mlir::OpConversionPattern<TestOp>(typeConverter, ctx, 1)
     {
     }
@@ -75,9 +75,55 @@ public:
         registry.insert<mlir::LLVM::LLVMDialect>();
     }
 
+    mlir::LogicalResult step1(mlir::ModuleOp module) {
+      mlir::ConversionTarget target(getContext());
+      target.addLegalDialect<mlir::StandardOpsDialect, mlir::BuiltinDialect>();
+
+      mlir::TypeConverter typeConverter;
+
+      typeConverter.addConversion([](mlir::Type type) ->llvm::Optional<mlir::Type> {
+        if (llvm::isa<mlir::BuiltinDialect>(type.getDialect()))
+          return type;
+        return llvm::None;
+      });
+
+      typeConverter.addConversion([this](BooleanType type) {
+        return mlir::IntegerType::get(&getContext(), 1);
+      });
+
+      typeConverter.addTargetMaterialization([](mlir::OpBuilder &builder,
+                                                mlir::IntegerType resultType,
+                                                mlir::ValueRange inputs,
+                                                mlir::Location loc)
+                                             -> llvm::Optional<mlir::Value> {
+        if (inputs.size() != 1 || !inputs[0].getType().isa<BooleanType>())
+          return llvm::None;
+
+        return builder.create<mlir::UnrealizedConversionCastOp>(loc, resultType, inputs[0]).getResult(0);
+      });
+
+      typeConverter.addSourceMaterialization([](mlir::OpBuilder &builder,
+                                                BooleanType resultType,
+                                                mlir::ValueRange inputs,
+                                                mlir::Location loc)
+                                             -> llvm::Optional<mlir::Value> {
+        if (inputs.size() != 1 || !inputs[0].getType().isa<mlir::IntegerType>())
+          return llvm::None;
+
+        return builder.create<mlir::UnrealizedConversionCastOp>(loc, resultType, inputs[0]).getResult(0);
+      });
+
+      mlir::OwningRewritePatternList patterns;
+      patterns.insert<TestOpLowering>(&getContext(), typeConverter);
+      return applyPartialConversion(module, target, std::move(patterns));
+    }
+
     void runOnOperation() final {
         auto module = getOperation();
 
+        if (failed(step1(module)))
+          return signalPassFailure();
+#if 0
         mlir::ConversionTarget target(getContext());
         target.addLegalDialect<mlir::LLVM::LLVMDialect>();
         target.addIllegalOp<mlir::LLVM::DialectCastOp>();
@@ -104,11 +150,12 @@ public:
         // With the target and rewrite patterns defined, we can now attempt the
         // conversion. The conversion will signal failure if any of our "illegal"
         // operations were not converted successfully.
-        if (failed(applyFullConversion(module, target, std::move(patterns))))
+        if (failed(applyPartialConversion(module, target, std::move(patterns))))
         {
         mlir::emitError(module.getLoc(), "Error in converting to LLVM dialect\n");
         signalPassFailure();
         }
+#endif
     }
 };
 

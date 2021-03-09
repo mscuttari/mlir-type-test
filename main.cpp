@@ -1,5 +1,7 @@
 #include <iostream>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Support/InitLLVM.h>
+#include <llvm/Support/CommandLine.h>
 #include <mlir/Conversion/Passes.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/StandardOps/IR/Ops.h>
@@ -14,7 +16,12 @@
 #include "TypeConverter.h"
 #include "Types.h"
 
-int main() {
+int main(int argc, char **argv) {
+  llvm::InitLLVM y(argc, argv);
+  mlir::registerMLIRContextCLOptions();
+  mlir::registerPassManagerCLOptions();
+  llvm::cl::ParseCommandLineOptions(argc, argv, "foo");
+
     mlir::MLIRContext context;
     context.loadDialect<MyDialect>();
     context.loadDialect<mlir::StandardOpsDialect>();
@@ -63,7 +70,11 @@ int main() {
     // Convert the module to LLVM IR
     mlir::PassManager passManager(&context);
     passManager.addPass(createMyDialectToLLVMLoweringPass());
-    passManager.run(module);
+    passManager.addPass(mlir::createLowerToLLVMPass());
+    if (failed(passManager.run(module)))
+      return 1;
+
+    module.dump();
 
     return 0;
 }
